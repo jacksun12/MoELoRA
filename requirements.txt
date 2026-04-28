@@ -1,0 +1,11 @@
+torch>=2.1.0
+transformers>=4.36.0
+accelerate
+datasets
+peft
+trl
+scikit-learn      # 用于 DB/CH 聚类计算
+numpy
+pandas
+matplotlib
+onnxruntime       # 为后续终端部署预留

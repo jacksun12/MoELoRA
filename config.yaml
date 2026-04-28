@@ -1,0 +1,80 @@
+runtime:
+  device: "cuda:2"
+
+model:
+  base_model_path: "Qwen/Qwen2.5-0.5B"
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+  router_mode: "centroid"  # centroid | learned
+  top_k: 1
+  alpha: 16
+  dropout: 0.05
+
+data:
+  dataset_type: "composite_device"  # movielens_1m | composite_device
+  data_dir: "data/auto_composite/composite_device"
+  max_seq_len: 512
+  history_size: 10
+  min_history: 3
+  min_user_samples: 3
+  neg_sample_size: 3
+  seed: 42
+  batch_size: 32
+  feature_batch_size: 16
+  stage1_samples: 50000
+  feature_cache_dir: "data/feature_cache"
+
+clustering:
+  feature_strategy: "sentence_mean"  # sentence_mean | last_token
+  k_min: 2
+  k_max: 8
+  random_state: 42
+  visualization_method: "both"  # none | pca | tsne | both
+  visualization_max_points: 3000
+  visualization_use_all_stage1: true
+  visualization_dir: "eval/figures"
+
+rank_allocation:
+  total_budget: 32
+  min_rank: 1
+  max_rank: 32
+  ppl_weight: 0.2
+  svd_weight: 0.8
+  ppl_max_samples_per_cluster: 512
+  ppl_loss_cap: 8.0
+  smooth_temperature: 1.8
+  min_extra_share: 0.20
+
+training:
+  trainer_backend: "trl"  # trl | custom
+  cluster_epochs: 2
+  router_epochs: 2
+  lora_lr: 0.0002
+  router_lr: 0.0002
+  gradient_accumulation_steps: 4
+  trl_per_device_batch_size: 2
+  trl_gradient_accumulation_steps: 4
+  trl_bf16: true
+  trl_fp16: false
+  trl_gradient_checkpointing: false
+  trl_dataloader_num_workers: 0
+  use_scheduler: true
+  warmup_ratio: 0.10
+  grad_clip: 1.0
+  curve_log_every: 20
+  curve_dir: "eval/figures"
+  curve_run_name: "moe_lora_run"
+
+stage2:
+  drift_sample_size: 1000
+  high_overlap_threshold: 0.75
+  mid_overlap_threshold: 0.50
+  optimize_for: "time"  # time | performance
+
+evaluation:
+  enable: true
+  k: 1
+  max_samples: 2000
+
+outputs:
+  checkpoint_root: "/remote-home/share/sunyansong/aggLLMv3"
+  trl_run_root: "eval/trl_runs"

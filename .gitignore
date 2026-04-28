@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Project outputs
+eval/logs/
+eval/figures/
+eval/trl_runs/
+checkpoints/
+
+# Local configs / caches
+data/feature_cache/
+*.npz
+*.pt
+*.bin
+
+# Datasets and large local artifacts
+data/ml_1m/
+data/auto_composite/
+data/composite_device/
+data/cds_dataset/
+data/yelp_user_events.jsonl
+data/*_events.jsonl
+
+# Optional downloaded archives
+*.zip
+*.tar
+*.tar.gz

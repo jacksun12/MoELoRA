@@ -1,0 +1,28 @@
+{
+  "composite_user_id": "device_user_001",
+  "sources": [
+    {
+      "type": "movielens_1m",
+      "data_dir": "data/ml_1m",
+      "user_id": 123,
+      "source_dataset": "movielens_1m",
+      "app": "movie",
+      "domain": "movie",
+      "item_prefix": "ml"
+    },
+    {
+      "type": "jsonl",
+      "path": "data/yelp_user_events.jsonl",
+      "user_field": "user_id",
+      "user_id": "abc123",
+      "timestamp_field": "timestamp",
+      "item_field": "business_id",
+      "title_field": "title",
+      "meta_field": "categories",
+      "source_dataset": "yelp",
+      "app": "local",
+      "domain": "poi",
+      "item_prefix": "yelp"
+    }
+  ]
+}
