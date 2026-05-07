@@ -3,8 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Default to physical GPU 7 unless user overrides externally.
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-7}"
+# 默认只暴露一张 GPU，除非用户在外部显式覆盖。
+# Default to a single visible GPU unless the user overrides it externally.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 echo "[run_dynamic_moe] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
 python - <<'PY'

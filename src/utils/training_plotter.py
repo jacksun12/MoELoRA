@@ -9,6 +9,10 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from .plot_style import MOPRED_COLORS, apply_global_plot_style, style_axes, style_legend
+
+
+apply_global_plot_style()
 
 
 @dataclass
@@ -49,22 +53,30 @@ class TrainingCurveTracker:
             key = f"{p.stage}:{p.track}"
             grouped.setdefault(key, []).append(p)
 
-        plt.figure(figsize=(8, 5))
+        plt.figure(figsize=(10, 6))
         ax1 = plt.subplot(1, 1, 1)
 
-        for key, seq in grouped.items():
+        for idx, (key, seq) in enumerate(grouped.items()):
             seq = sorted(seq, key=lambda x: x.step)
             xs = [p.step for p in seq if np.isfinite(p.loss)]
             ys_loss = [p.loss for p in seq if np.isfinite(p.loss)]
             if len(xs) == 0:
                 continue
-            ax1.plot(xs, ys_loss, marker="o", linewidth=1.5, label=key)
+            ax1.plot(
+                xs,
+                ys_loss,
+                marker="o",
+                linewidth=2.2,
+                markersize=5.5,
+                color=MOPRED_COLORS[idx % len(MOPRED_COLORS)],
+                label=key,
+            )
 
-        ax1.set_title("Training Loss Curves")
-        ax1.set_xlabel("Global Training Step")
-        ax1.set_ylabel("Loss")
-        ax1.grid(alpha=0.3)
-        ax1.legend(fontsize=7)
+        ax1.set_title("Training Loss Curves", fontsize=20, fontweight="bold", pad=16)
+        ax1.set_xlabel("Global Training Step", fontsize=18, fontweight="bold")
+        ax1.set_ylabel("Loss", fontsize=18, fontweight="bold")
+        style_axes(ax1, grid_axis="both")
+        style_legend(ax1, loc="upper right", fontsize=11)
 
         plt.tight_layout()
         plt.savefig(self.png_path, dpi=180)

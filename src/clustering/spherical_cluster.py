@@ -8,7 +8,7 @@ def l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
 
 
 class SphericalKMeans:
-    """A lightweight spherical k-means (cosine similarity) implementation."""
+    """轻量级球面 k-means（基于余弦相似度）实现。 / A lightweight spherical k-means (cosine-similarity) implementation."""
 
     def __init__(self, n_clusters: int, max_iter: int = 50, tol: float = 1e-4, random_state: int = 42):
         self.n_clusters = n_clusters
@@ -35,7 +35,8 @@ class SphericalKMeans:
             for k in range(self.n_clusters):
                 members = x[labels == k]
                 if len(members) == 0:
-                    # Reinitialize empty cluster with a random point.
+                    # 用随机样本重新初始化空簇。
+                    # Reinitialize an empty cluster with a random point.
                     rand_idx = np.random.randint(0, x.shape[0])
                     new_centroids[k] = x[rand_idx]
                 else:
@@ -59,7 +60,10 @@ class SphericalKMeans:
 
 class DBCHKSelector:
     """
-    Select best k with DB/CH metrics on spherical clustering labels.
+    基于球面聚类标签上的 DB/CH 指标选择最优 k。
+    Select the best k using DB/CH metrics computed on spherical-clustering labels.
+
+    DB 越小越好，CH 越大越好。
     Lower DB and higher CH are preferred.
     """
 

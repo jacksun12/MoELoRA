@@ -12,15 +12,112 @@ def _letter_options():
     return ["A", "B", "C", "D"]
 
 
+class TextGenerationDataset(Dataset):
+    """
+    通用的 prompt 到目标文本数据集，用于生成式个性化任务。
+    Generic prompt-to-target-text dataset for generation-style personalization tasks.
+    """
+
+    task_type = "text_generation"
+    instruction_text = "Generate the target text that best matches the user preference."
+
+    def __init__(self, tokenizer=None, max_seq_len=512, split="train"):
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        self.split = split
+        self.samples = []
+
+    def __len__(self):
+        return len(self.samples)
+
+    def _format_prompt(self, sample: Dict) -> str:
+        source_text = sample.get("source_text", "").strip()
+        style_label = sample.get("style_label", "unknown").strip()
+        prompt = (
+            "### Instruction:\n"
+            f"{self.instruction_text}\n\n"
+            "### Input:\n"
+            f"Target writing style: {style_label}\n"
+            f"Source sentence: {source_text}\n\n"
+            "### Response:\n"
+        )
+        return prompt
+
+    def _format_target(self, sample: Dict) -> str:
+        return sample.get("target_text", "").strip()
+
+    def _build_eval_prompt_tensors(self, prompt_ids):
+        eval_ids = prompt_ids[: self.max_seq_len]
+        eval_len = len(eval_ids)
+        eval_pad_len = max(0, self.max_seq_len - eval_len)
+        if eval_pad_len > 0:
+            eval_ids = [self.tokenizer.pad_token_id] * eval_pad_len + eval_ids
+        eval_input_ids = torch.tensor(eval_ids, dtype=torch.long)
+        eval_attention_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
+        eval_attention_mask[eval_pad_len : eval_pad_len + eval_len] = 1
+        return eval_input_ids, eval_attention_mask
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        prompt = self._format_prompt(sample)
+        target_text = self._format_target(sample)
+
+        target_ids = self.tokenizer.encode(target_text, add_special_tokens=False)
+        if len(target_ids) == 0:
+            target_ids = self.tokenizer.encode(" ", add_special_tokens=False)
+
+        max_prompt_len = max(1, self.max_seq_len - len(target_ids))
+        prompt_ids = self.tokenizer.encode(
+            prompt,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_prompt_len,
+        )
+
+        full_ids = prompt_ids + target_ids
+        full_len = len(full_ids)
+        pad_len = max(0, self.max_seq_len - full_len)
+        if pad_len > 0:
+            full_ids = full_ids + [self.tokenizer.pad_token_id] * pad_len
+        else:
+            full_ids = full_ids[: self.max_seq_len]
+            full_len = self.max_seq_len
+
+        input_ids = torch.tensor(full_ids, dtype=torch.long)
+        attention_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
+        attention_mask[:full_len] = 1
+        labels = torch.full((self.max_seq_len,), -100, dtype=torch.long)
+        target_start = min(len(prompt_ids), self.max_seq_len - 1)
+        labels[target_start:full_len] = input_ids[target_start:full_len]
+
+        eval_input_ids, eval_attention_mask = self._build_eval_prompt_tensors(prompt_ids)
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "eval_input_ids": eval_input_ids,
+            "eval_attention_mask": eval_attention_mask,
+            "target_text": target_text,
+            "style_label": sample.get("style_label", "unknown"),
+            "user_id": sample.get("user_id", "unknown_user"),
+            "raw_text": f"{prompt}{target_text}",
+        }
+
+
 class MultipleChoiceSequentialDataset(Dataset):
     """
+    面向 LLM 的通用多项选择下一物品推荐数据集。
     Generic multiple-choice next-item recommendation dataset for LLMs.
 
+    每个样本包含：
     Each sample contains:
-    - history_items: ordered prior interactions
-    - candidate_items: 4 candidates with exactly one positive
-    - target_option_idx: index of the positive item in candidate_items
+    - history_items: 按时间排序的历史交互 / ordered prior interactions
+    - candidate_items: 4 个候选，其中恰好有 1 个正例 / 4 candidates with exactly one positive
+    - target_option_idx: 正例在 candidate_items 中的索引 / index of the positive item in candidate_items
     """
+
+    task_type = "multiple_choice"
 
     instruction_text = (
         "Given the device user's recent cross-app activity, choose the most likely next item "
@@ -40,7 +137,8 @@ class MultipleChoiceSequentialDataset(Dataset):
         title = item.get("title", "Unknown Item")
         domain = item.get("domain", "unknown")
         source = item.get("source_dataset", item.get("app", "unknown"))
-        # Keep the cross-app signal but avoid overly verbose prompts for small models.
+        # 保留跨应用信号，同时避免对小模型构造过长提示词。
+        # Keep the cross-app signal while avoiding overly verbose prompts for small models.
         return f"{prefix}{title} | Domain: {domain} | Source: {source}"
 
     def _format_prompt(self, sample: Dict) -> str:
@@ -62,11 +160,26 @@ class MultipleChoiceSequentialDataset(Dataset):
         )
         return prompt
 
-    def __getitem__(self, idx):
-        sample = self.samples[idx]
+    def _format_target(self, sample: Dict) -> str:
         letters = _letter_options()
         target_option_idx = int(sample["target_option_idx"])
-        target_letter = letters[target_option_idx]
+        return letters[target_option_idx]
+
+    def _build_eval_prompt_tensors(self, prompt_ids):
+        eval_ids = prompt_ids[: self.max_seq_len]
+        eval_len = len(eval_ids)
+        eval_pad_len = max(0, self.max_seq_len - eval_len)
+        if eval_pad_len > 0:
+            eval_ids = [self.tokenizer.pad_token_id] * eval_pad_len + eval_ids
+        eval_input_ids = torch.tensor(eval_ids, dtype=torch.long)
+        eval_attention_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
+        eval_attention_mask[eval_pad_len : eval_pad_len + eval_len] = 1
+        return eval_input_ids, eval_attention_mask
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        target_option_idx = int(sample["target_option_idx"])
+        target_letter = self._format_target(sample)
 
         prompt = self._format_prompt(sample)
         target_ids = self.tokenizer.encode(target_letter, add_special_tokens=False)
@@ -97,13 +210,7 @@ class MultipleChoiceSequentialDataset(Dataset):
         target_start = min(len(prompt_ids), self.max_seq_len - 1)
         labels[target_start:full_len] = input_ids[target_start:full_len]
 
-        eval_ids = prompt_ids[: self.max_seq_len]
-        eval_len = len(eval_ids)
-        eval_pad_len = max(0, self.max_seq_len - eval_len)
-        eval_ids = eval_ids + [self.tokenizer.pad_token_id] * eval_pad_len
-        eval_input_ids = torch.tensor(eval_ids, dtype=torch.long)
-        eval_attention_mask = torch.zeros(self.max_seq_len, dtype=torch.long)
-        eval_attention_mask[:eval_len] = 1
+        eval_input_ids, eval_attention_mask = self._build_eval_prompt_tensors(prompt_ids)
 
         return {
             "input_ids": input_ids,
@@ -119,6 +226,7 @@ class MultipleChoiceSequentialDataset(Dataset):
 
 class MovieLens1MSequential(MultipleChoiceSequentialDataset):
     """
+    MovieLens-1M 的多项选择下一物品推荐数据集。
     Multiple-choice next-item recommendation dataset for MovieLens-1M.
     """
 
@@ -276,8 +384,10 @@ class MovieLens1MSequential(MultipleChoiceSequentialDataset):
 
 class CompositeSequentialDataset(MultipleChoiceSequentialDataset):
     """
+    基于预构造 JSONL 复合设备样本的数据集。
     Dataset backed by pre-built JSONL composite-device samples.
 
+    每行期望包含的字段：
     Expected fields per row:
     - user_id
     - timestamp
@@ -333,6 +443,48 @@ class CompositeSequentialDataset(MultipleChoiceSequentialDataset):
         return rows
 
 
+class StyleTransferJsonlDataset(TextGenerationDataset):
+    """
+    基于 JSONL 风格迁移样本的数据集。
+    Dataset backed by JSONL style-transfer samples.
+
+    每行期望包含的字段：
+    Expected fields per row:
+    - user_id
+    - timestamp
+    - style_label
+    - source_text
+    - target_text
+    """
+
+    instruction_text = (
+        "Rewrite the source sentence to match the target writing style while preserving its meaning."
+    )
+
+    def __init__(self, data_dir="data/cds_private_device", tokenizer=None, max_seq_len=512, split="train"):
+        super().__init__(tokenizer=tokenizer, max_seq_len=max_seq_len, split=split)
+        self.data_dir = data_dir
+        self.samples = self._load_split_samples()
+
+    def _load_jsonl(self, path: str) -> List[Dict]:
+        rows = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+        return rows
+
+    def _load_split_samples(self) -> List[Dict]:
+        path = os.path.join(self.data_dir, f"{self.split}.jsonl")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Missing style-transfer split file: {path}")
+        rows = self._load_jsonl(path)
+        print(f"Loaded {len(rows)} style-transfer samples from {path}")
+        return rows
+
+
 def build_dataset(cfg, tokenizer, split):
     dataset_type = cfg.get("data", {}).get("dataset_type", "movielens_1m").lower()
     max_seq_len = cfg["data"]["max_seq_len"]
@@ -358,11 +510,28 @@ def build_dataset(cfg, tokenizer, split):
             split=split,
         )
 
+    if dataset_type in {"style_transfer_jsonl", "cds_style_transfer", "style_transfer"}:
+        return StyleTransferJsonlDataset(
+            data_dir=cfg["data"].get("data_dir", "data/cds_private_device"),
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            split=split,
+        )
+
     raise ValueError(f"Unsupported data.dataset_type={dataset_type}")
 
 
 @torch.no_grad()
 def extract_clustering_features(model, batch_inputs, strategy="sentence_mean"):
+    """
+    从最后一层隐藏状态中提取样本级聚类特征。
+    Extract sample-level clustering features from the last hidden state.
+
+    支持的 strategy：
+    Supported strategies:
+    - sentence_mean: 对有效 token 做均值池化 / mean-pool over valid tokens
+    - last_token: 使用最后一个有效 token 的表示 / use the last valid token representation
+    """
     outputs = model(
         input_ids=batch_inputs["input_ids"],
         attention_mask=batch_inputs["attention_mask"],

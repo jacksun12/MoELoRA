@@ -10,44 +10,47 @@ class TaskDiscoveryMonitor:
         self.evaluator = ClusterEvaluator()
 
     def update_buffer(self, hidden_state_features):
-            """
-            每次模型 forward 时，将提取的 hidden states 塞进来
-            hidden_state_features: shape [batch_size, hidden_dim]
-            """
-            # 👇 --- 核心修复：添加 .float() 转换 --- 👇
-            # NumPy 不认识 bfloat16，必须先强转为普通的 float32
-            features_np = hidden_state_features.detach().cpu().float().numpy()
-            # 👆 ----------------------------------- 👆
-            
-            for feat in features_np:
-                self.feature_buffer.append(feat)
-                
-                # 如果缓冲区满了，触发一次“雷达扫描”
-                if len(self.feature_buffer) >= self.buffer_size:
-                    return self._analyze_and_flush()
-            return False, None
+        """
+        向缓冲区添加一批前向过程中收集到的隐藏状态特征。
+        Add one batch of hidden-state features collected during forward passes.
+
+        hidden_state_features 的形状为 [batch_size, hidden_dim]。
+        hidden_state_features has shape [batch_size, hidden_dim].
+        """
+        # NumPy 不支持 bfloat16，因此先转成 float32。
+        # NumPy does not support bfloat16, so cast to float32 first.
+        features_np = hidden_state_features.detach().cpu().float().numpy()
+
+        for feat in features_np:
+            self.feature_buffer.append(feat)
+
+            # 缓冲区满时触发一次轻量级聚类扫描。
+            # Trigger one lightweight clustering scan when the buffer is full.
+            if len(self.feature_buffer) >= self.buffer_size:
+                return self._analyze_and_flush()
+        return False, None
 
     def _analyze_and_flush(self):
-        """对缓冲区内的数据进行无监督聚类分析"""
-        print(f"🔍 [Task Discovery] Buffer full ({self.buffer_size} samples). Running clustering analysis...")
+        """在缓冲特征上运行一次无监督聚类分析。 / Run an unsupervised clustering pass over the buffered features."""
+        print(f"[Task Discovery] Buffer full ({self.buffer_size} samples). Running clustering analysis...")
         data = np.array(self.feature_buffer)
-        
-        # 1. 尝试使用轻量级 KMeans 将当前数据强行分为 n 簇
+
+        # 探测最近缓冲区中是否出现新的兴趣区域。
+        # Probe whether a new interest region has emerged in the recent buffer.
         kmeans = MiniBatchKMeans(n_clusters=self.n_clusters_guess, random_state=42, n_init="auto")
         labels = kmeans.fit_predict(data)
-        
-        # 2. 调用我们之前写的 Evaluator 来评判这个聚类靠不靠谱
-        # 如果 DB/CH 分数显示聚类非常清晰，说明确实出现了截然不同的新任务
+
+        # 让 DB/CH 指标决定这次分裂是否足够显著。
+        # Let DB/CH metrics decide whether this split is sufficiently distinct.
         is_distinct = self.evaluator.should_split(data, labels)
-        
-        # 清空缓冲区，为下一轮监控做准备
+
+        # 重置缓冲区，为下一轮监控窗口做准备。
+        # Reset the buffer for the next monitoring window.
         self.feature_buffer = []
-        
+
         if is_distinct:
-            print("🚨 [Task Discovery] Distinct new task cluster found!")
-            # 返回 True，并告诉系统层：这批数据中哪一部分是“复杂的/新的”
-            # （这里简单起见返回 True，实际系统可以返回具体的 cluster centroids 供 Router 微调）
+            print("[Task Discovery] Distinct new task cluster found.")
             return True, kmeans.cluster_centers_
         else:
-            print("⏳ [Task Discovery] Data distribution stable. No split needed.")
+            print("[Task Discovery] Data distribution stable. No split needed.")
             return False, None

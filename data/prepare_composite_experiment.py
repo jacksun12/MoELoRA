@@ -230,6 +230,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--q_original", type=float, default=0.5)
     parser.add_argument("--q_finetune_end", type=float, default=0.8)
+    parser.add_argument("--negative_pool_mode", type=str, default="same_source", choices=["same_source", "same_domain", "global"])
     args = parser.parse_args()
 
     os.makedirs(args.output_root, exist_ok=True)
@@ -290,6 +291,7 @@ def main():
         min_history=args.min_history,
         neg_sample_size=args.neg_sample_size,
         seed=args.seed,
+        negative_pool_mode=args.negative_pool_mode,
     )
 
     save_jsonl(os.path.join(composite_dir, "events_all.jsonl"), merged_events)

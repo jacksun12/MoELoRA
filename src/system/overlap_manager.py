@@ -9,7 +9,8 @@ def cosine_sim_matrix(a: np.ndarray, b: np.ndarray, eps: float = 1e-12) -> np.nd
 
 class ClusterOverlapManager:
     """
-    Compare previous and new cluster layouts and choose update strategy.
+    比较旧簇布局与新簇布局，并选择更新策略。
+    Compare previous and new cluster layouts and choose an update strategy.
     """
 
     def __init__(self, high_overlap_threshold: float = 0.75, mid_overlap_threshold: float = 0.5):
@@ -24,7 +25,8 @@ class ClusterOverlapManager:
         pairs = []
         used_old = set()
 
-        # Sort all candidate edges by similarity descending.
+        # 按相似度从高到低排序所有候选边。
+        # Sort all candidate edges by similarity in descending order.
         edges = []
         for i in range(sim.shape[0]):
             for j in range(sim.shape[1]):

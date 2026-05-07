@@ -220,6 +220,7 @@ def build_samples_for_segment(
     min_history: int,
     neg_sample_size: int,
     rng: random.Random,
+    negative_pool_mode: str = "same_source",
 ) -> List[Dict]:
     if len(events) < max(history_size + 1, min_history + 1):
         return []
@@ -232,7 +233,22 @@ def build_samples_for_segment(
         history_ids = [e["item_id"] for e in history_events]
         forbidden = set(history_ids)
         forbidden.add(target_event["item_id"])
-        negative_pool = [item_id for item_id in all_item_ids if item_id not in forbidden]
+        if negative_pool_mode == "same_source":
+            negative_pool = [
+                item_id
+                for item_id in all_item_ids
+                if item_id not in forbidden
+                and item_catalog[item_id]["source_dataset"] == target_event["source_dataset"]
+            ]
+        elif negative_pool_mode == "same_domain":
+            negative_pool = [
+                item_id
+                for item_id in all_item_ids
+                if item_id not in forbidden
+                and item_catalog[item_id]["domain"] == target_event["domain"]
+            ]
+        else:
+            negative_pool = [item_id for item_id in all_item_ids if item_id not in forbidden]
         if len(negative_pool) < neg_sample_size:
             continue
 
@@ -263,6 +279,7 @@ def build_all_samples(
     min_history: int,
     neg_sample_size: int,
     seed: int,
+    negative_pool_mode: str = "same_source",
 ) -> Dict[str, List[Dict]]:
     item_catalog = {}
     for rows in events_by_split.values():
@@ -280,6 +297,7 @@ def build_all_samples(
             min_history=min_history,
             neg_sample_size=neg_sample_size,
             rng=rng,
+            negative_pool_mode=negative_pool_mode,
         )
 
     merged_train = sorted(
@@ -331,6 +349,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--q_original", type=float, default=0.5)
     parser.add_argument("--q_finetune_end", type=float, default=0.8)
+    parser.add_argument("--negative_pool_mode", type=str, default="same_source", choices=["same_source", "same_domain", "global"])
     args = parser.parse_args()
 
     manifest = load_json(args.manifest)
@@ -347,6 +366,7 @@ def main():
         min_history=args.min_history,
         neg_sample_size=args.neg_sample_size,
         seed=args.seed,
+        negative_pool_mode=args.negative_pool_mode,
     )
 
     os.makedirs(args.output_dir, exist_ok=True)

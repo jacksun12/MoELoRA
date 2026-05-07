@@ -18,14 +18,17 @@ class ExperimentLogger:
         logger = logging.getLogger("MoE-LoRA")
         logger.setLevel(logging.INFO)
         
-        # 防止重复添加 handler
+        # 防止重复添加 handler。
+        # Avoid attaching duplicate handlers.
         if not logger.handlers:
-            # 终端输出
+            # 终端输出。
+            # Console output.
             console_handler = logging.StreamHandler()
             console_formatter = logging.Formatter('%(asctime)s | %(levelname)-7s | %(message)s', '%H:%M:%S')
             console_handler.setFormatter(console_formatter)
             
-            # 文件输出
+            # 文件输出。
+            # File output.
             file_handler = logging.FileHandler(self.log_file)
             file_formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(message)s')
             file_handler.setFormatter(file_formatter)
@@ -46,8 +49,11 @@ class ExperimentLogger:
 
     def log_metrics(self, step, metrics_dict):
         """
-        将指标结构化保存为 JSONL 格式。
-        方便后续跑完实验，直接写个小脚本读取它画折线图。
+        将指标以 JSONL 格式结构化保存。
+        Persist metrics in structured JSONL format.
+
+        这样实验结束后可以直接读取并绘制曲线。
+        This makes it easy to read the logs later and plot curves.
         """
         data = {"step": step}
         data.update(metrics_dict)
@@ -55,6 +61,7 @@ class ExperimentLogger:
         with open(self.metric_file, "a") as f:
             f.write(json.dumps(data) + "\n")
             
-        # 终端打印核心指标预览
+        # 终端打印核心指标预览。
+        # Print a compact metric preview to the console.
         metrics_str = ", ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}" for k, v in metrics_dict.items()])
         self.logger.info(f"[Step {step}] {metrics_str}")

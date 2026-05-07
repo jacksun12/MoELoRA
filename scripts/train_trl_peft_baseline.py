@@ -148,7 +148,8 @@ def main():
     tokenizer.save_pretrained(adapter_dir)
     print(f"Adapter saved to: {adapter_dir}")
 
-    # Reload with PEFT wrapper for generation-style evaluation.
+    # 重新以 PEFT 包装器加载模型，用于生成式评测。
+    # Reload the model with a PEFT wrapper for generation-style evaluation.
     base_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
     if torch.cuda.is_available():
         base_model = base_model.cuda()
@@ -159,4 +160,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

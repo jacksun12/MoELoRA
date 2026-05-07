@@ -38,9 +38,13 @@ class MoELoRALinear(nn.Module):
 
     def _build_request_representation(self, x):
         """
-        Build one routing representation per request/sample.
+        为每个请求或样本构造一个路由表示。
+        Build one routing representation per request or sample.
 
+        对于序列输入 [B, L, H]，在序列维上做均值池化。
         For sequence inputs [B, L, H], use mean pooling over the sequence dimension.
+
+        对于二维输入 [N, H]，按每一行独立路由。
         For 2D inputs [N, H], route each row independently.
         """
         if x.dim() == 3:
@@ -84,8 +88,11 @@ class MoELoRALinear(nn.Module):
     @torch.no_grad()
     def rebuild_experts(self, new_ranks, inherit_map=None):
         """
-        Rebuild experts by new rank layout.
-        inherit_map: dict[new_idx] = old_idx
+        根据新的 rank 布局重建 experts。
+        Rebuild experts according to the new rank layout.
+
+        inherit_map 表示新旧 expert 的继承关系：dict[new_idx] = old_idx。
+        inherit_map describes new-to-old expert inheritance: dict[new_idx] = old_idx.
         """
         old_experts = list(self.experts)
         in_features = self.base_layer.in_features

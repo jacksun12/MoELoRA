@@ -11,8 +11,11 @@ class InferenceRequest:
 
 class HeteroBatchScheduler:
     """
+    按激活的 LoRA 签名对请求分组。
     Group requests by activated LoRA signatures.
-    High-parallel groups go to GPU, sparse groups go to CPU.
+
+    并行度高的请求组送到 GPU，稀疏组送到 CPU。
+    High-parallel groups go to GPU, while sparse groups go to CPU.
     """
 
     def __init__(self, gpu_min_batch: int = 4, gpu_min_tokens: int = 256):

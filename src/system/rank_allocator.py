@@ -2,21 +2,17 @@ import numpy as np
 
 
 class BudgetedRankAllocator:
-    """Allocate integer ranks under a fixed budget using marginal utility curves."""
+    """在固定预算下依据边际收益曲线分配整数 rank。 / Allocate integer ranks under a fixed budget using marginal utility curves."""
 
     def __init__(
         self,
         total_rank_budget: int,
         min_rank: int = 2,
         max_rank: int = 16,
-        temperature: float = 1.5,
-        min_extra_share: float = 0.10,
     ):
         self.total_rank_budget = total_rank_budget
         self.min_rank = min_rank
         self.max_rank = max_rank
-        self.temperature = max(float(temperature), 1e-6)
-        self.min_extra_share = float(np.clip(min_extra_share, 0.0, 1.0))
 
     def allocate(self, marginal_gains, cluster_scores=None):
         gains = [np.asarray(x, dtype=np.float32) for x in marginal_gains]
@@ -40,8 +36,10 @@ class BudgetedRankAllocator:
 
         base_budget = n * self.min_rank
         if base_budget > self.total_rank_budget:
-            per = max(1, self.total_rank_budget // n)
-            return [per] * n
+            ranks = np.zeros(n, dtype=int)
+            for i in range(self.total_rank_budget):
+                ranks[i % n] += 1
+            return ranks.tolist()
 
         ranks = np.full(n, self.min_rank, dtype=int)
         remaining = int(self.total_rank_budget - base_budget)
@@ -74,31 +72,3 @@ class BudgetedRankAllocator:
                 f"budget={self.total_rank_budget}"
             )
         return ranks.tolist()
-
-
-def normalized_complexity(ppl_values, svd_values, ppl_weight: float = 0.6, svd_weight: float = 0.4):
-    """
-    Merge PPL and SVD complexity into one normalized score per cluster.
-    Larger score => more difficult/private pattern => higher rank demand.
-    """
-
-    ppl = np.asarray(ppl_values, dtype=np.float32)
-    svd = np.asarray(svd_values, dtype=np.float32)
-
-    def norm(x):
-        x = np.asarray(x, dtype=np.float32)
-        finite = np.isfinite(x)
-        if not finite.any():
-            return np.ones_like(x, dtype=np.float32)
-        fill = float(np.nanmean(x[finite]))
-        x = np.where(finite, x, fill).astype(np.float32)
-        mn, mx = float(x.min()), float(x.max())
-        if abs(mx - mn) < 1e-8:
-            return np.ones_like(x)
-        return (x - mn) / (mx - mn)
-
-    ppl_n = norm(ppl)
-    svd_n = norm(svd)
-    score = ppl_weight * ppl_n + svd_weight * svd_n
-    score = np.nan_to_num(score, nan=1.0, posinf=1.0, neginf=0.0)
-    return score.tolist()
