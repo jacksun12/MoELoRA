@@ -20,6 +20,7 @@ DISPLAY_NAMES = {
     "single_lora_r32": "LoRA r32",
     "mocle_4x8": "MoCLE 4x8",
     "hydralora_4x8": "HydraLoRA 4x8",
+    "raie": "RAIE",
     "moe_lora_stage1": "MoE-LoRA Stage-1",
 }
 MARKERS = ["o", "s", "^", "D", "P", "X"]
@@ -45,9 +46,8 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-    with open(args.input_json, "r", encoding="utf-8") as f:
+def generate_tradeoff_plot(input_json, metric="rougeL_f1", x_axis="eval_peak_alloc_gb", output_path=""):
+    with open(input_json, "r", encoding="utf-8") as f:
         payload = json.load(f)
     rows = payload.get("results", [])
     if not rows:
@@ -57,8 +57,8 @@ def main():
     ax.set_facecolor("#fcfbf8")
 
     for idx, row in enumerate(rows):
-        x = row.get(args.x_axis)
-        y = row.get(args.metric)
+        x = row.get(x_axis)
+        y = row.get(metric)
         if x is None or y is None:
             continue
         color = MOPRED_COLORS[idx % len(MOPRED_COLORS)]
@@ -87,22 +87,32 @@ def main():
         "bleu1": "BLEU-1",
         "rougeL_f1": "ROUGE-L F1",
     }
-    ax.set_xlabel(x_labels[args.x_axis], fontsize=18, fontweight="bold")
-    ax.set_ylabel(y_labels[args.metric], fontsize=18, fontweight="bold")
+    ax.set_xlabel(x_labels[x_axis], fontsize=18, fontweight="bold")
+    ax.set_ylabel(y_labels[metric], fontsize=18, fontweight="bold")
     style_axes(ax, grid_axis="both")
 
-    title = f"Task Quality vs System Cost ({args.metric} vs {args.x_axis})"
+    title = f"Task Quality vs System Cost ({metric} vs {x_axis})"
     ax.set_title(title, fontsize=20, fontweight="bold", pad=16)
 
-    output_path = args.output_path
     if not output_path:
-        stem = os.path.splitext(os.path.basename(args.input_json))[0]
-        output_path = os.path.join("eval", "figures", f"{stem}_{args.metric}_vs_{args.x_axis}.png")
+        stem = os.path.splitext(os.path.basename(input_json))[0]
+        output_path = os.path.join("eval", "figures", f"{stem}_{metric}_vs_{x_axis}.png")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout()
     fig.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
-    print(json.dumps({"output_path": output_path}, ensure_ascii=False, indent=2))
+    return {"output_path": output_path, "metric": metric, "x_axis": x_axis}
+
+
+def main():
+    args = parse_args()
+    result = generate_tradeoff_plot(
+        args.input_json,
+        metric=args.metric,
+        x_axis=args.x_axis,
+        output_path=args.output_path,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

@@ -11,9 +11,29 @@ from torch.utils.data import Subset
 from src.utils.cluster_viz import plot_cluster_style_mix
 
 
-def load_config(path="config.yaml"):
+def _deep_merge_dict(base, overrides):
+    merged = dict(base)
+    for key, value in (overrides or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_config(path="config_unified.yaml", profile=None):
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+
+    profiles = cfg.pop("profiles", {}) or {}
+    selected_profile = profile or cfg.pop("active_profile", None)
+    if selected_profile:
+        if selected_profile not in profiles:
+            available = ", ".join(sorted(profiles.keys()))
+            raise ValueError(f"Unknown config profile={selected_profile}. Available profiles: {available}")
+        cfg = _deep_merge_dict(cfg, profiles[selected_profile])
+        cfg["_profile"] = selected_profile
+    return cfg
 
 
 def resolve_device(cfg):

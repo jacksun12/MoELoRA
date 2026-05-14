@@ -15,7 +15,7 @@ from data.data_loader import MovieLens1MSequential
 LETTERS = ["A", "B", "C", "D"]
 
 
-def load_config(path: str = "config.yaml") -> Dict:
+def load_config(path: str = "config_unified.yaml") -> Dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -70,7 +70,7 @@ def evaluate_generate_hit1(model, tokenizer, test_rows: List[Dict], max_new_toke
 
 
 def main():
-    cfg = load_config("config.yaml")
+    cfg = load_config("config_unified.yaml")
 
     model_id = cfg["model"]["base_model_path"]
     out_root = cfg.get("outputs", {}).get("checkpoint_root", "checkpoints")

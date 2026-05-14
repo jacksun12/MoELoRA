@@ -48,6 +48,45 @@ def train_single_lora(
     return trained_model
 
 
+def continue_single_lora(
+    model,
+    train_dataset,
+    cfg,
+    device,
+    logger,
+    tokenizer,
+    *,
+    build_baseline_sft_trainer,
+    clear_cuda_cache,
+    out_dir_suffix="stage2",
+):
+    logger.info(f"[Baseline] continuing single_lora_r32 on {out_dir_suffix}")
+    out_dir = os.path.join(
+        cfg.get("outputs", {}).get("trl_run_root", "eval/trl_runs"),
+        f"baseline_single_lora_r32_{out_dir_suffix}",
+    )
+    trainer = build_baseline_sft_trainer(
+        model=model,
+        dataset=train_dataset,
+        cfg=cfg,
+        lr=cfg["training"]["lora_lr"],
+        epochs=cfg["training"]["cluster_epochs"],
+        tokenizer=tokenizer,
+        out_dir=out_dir,
+        peft_config=None,
+    )
+    old_use_cache = getattr(model.config, "use_cache", None)
+    if old_use_cache is not None:
+        model.config.use_cache = False
+    trainer.train()
+    if old_use_cache is not None:
+        model.config.use_cache = old_use_cache
+    trained_model = trainer.model
+    del trainer
+    clear_cuda_cache()
+    return trained_model
+
+
 def evaluate_single_lora(
     train_dataset,
     test_dataset,

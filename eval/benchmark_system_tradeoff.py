@@ -11,10 +11,11 @@ if PROJECT_ROOT not in sys.path:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark task quality vs system cost for CDS baselines.")
-    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--config", default="config_unified.yaml")
+    parser.add_argument("--profile", default="", help="Optional profile inside a unified config file.")
     parser.add_argument(
         "--methods",
-        default="raw_base,single_lora_r32,mocle_4x8,hydralora_4x8,moe_lora_stage1",
+        default="raw_base,single_lora_r32,mocle_4x8,hydralora_4x8,raie,moe_lora_stage1",
         help="Comma-separated methods to benchmark.",
     )
     parser.add_argument("--output_json", default="")
@@ -26,6 +27,7 @@ def main():
     args = parse_args()
 
     from transformers import AutoTokenizer
+    from eval.plot_system_tradeoff import generate_tradeoff_plot
 
     from data.data_loader import build_dataset
     from main_server_sim import (
@@ -43,14 +45,17 @@ def main():
         run_stage0_cloud_pretraining,
         set_model_router_centroids,
         set_global_seed,
+        split_historical_and_new,
         train_hydralora_baseline_model,
         train_mocle_baseline_model,
+        evaluate_raie_baseline_state,
+        train_raie_baseline_model,
         train_single_lora_baseline_model,
         train_experts_by_clusters,
         _load_causal_lm,
         build_feature_cache_path,
     )
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, profile=args.profile or None)
     set_global_seed(int(cfg.get("data", {}).get("seed", 42)))
     device = resolve_device(cfg)
     logger = ExperimentLogger(log_dir="eval/logs", exp_name="system_tradeoff_benchmark")
@@ -64,9 +69,18 @@ def main():
     cfg["_tokenizer_obj"] = tokenizer
 
     full_train = build_dataset(cfg, tokenizer=tokenizer, split="train")
-    test_dataset = build_dataset(cfg, tokenizer=tokenizer, split="test")
+    full_test = build_dataset(cfg, tokenizer=tokenizer, split="test")
     stage1_cap = args.stage1_samples if args.stage1_samples > 0 else int(cfg["data"].get("stage1_samples", 50000))
-    train_dataset = maybe_subset(full_train, stage1_cap)
+    historical_train, _, _ = split_historical_and_new(
+        full_train,
+        cfg["stage2"].get("drift_sample_size", 1000),
+    )
+    historical_test, _, _ = split_historical_and_new(
+        full_test,
+        cfg["stage2"].get("drift_sample_size", 1000),
+    )
+    train_dataset = maybe_subset(historical_train, stage1_cap)
+    test_dataset = historical_test
 
     task_type = get_dataset_task_type(train_dataset)
     if task_type != "text_generation":
@@ -247,7 +261,11 @@ def main():
             raw_tokenizer = AutoTokenizer.from_pretrained(cfg["model"]["base_model_path"])
             raw_tokenizer.pad_token = raw_tokenizer.eos_token
             raw_tokenizer.padding_side = "left"
-            raw_test_dataset = build_dataset(cfg, tokenizer=raw_tokenizer, split="test")
+            raw_full_test = build_dataset(cfg, tokenizer=raw_tokenizer, split="test")
+            raw_test_dataset, _, _ = split_historical_and_new(
+                raw_full_test,
+                cfg["stage2"].get("drift_sample_size", 1000),
+            )
             model, train_result = _measure_train(method, lambda: _load_causal_lm(cfg["model"]["base_model_path"], device))
             eval_result = _measure_eval(method, model, raw_test_dataset, raw_tokenizer)
             del model
@@ -280,6 +298,38 @@ def main():
             del model
             clear_cuda_cache()
             results.append({"method": method, **train_result, **eval_result})
+        elif method == "raie":
+            state, train_result = _measure_train(
+                method,
+                lambda: train_raie_baseline_model(train_dataset, features, cfg, device, logger, tokenizer, model_id),
+            )
+            _begin_measure()
+            import time
+            start = time.perf_counter()
+            metrics = evaluate_raie_baseline_state(
+                state,
+                test_dataset,
+                cfg,
+                device,
+                logger,
+                tokenizer,
+                eval_tag="raie",
+                cache_suffix="benchmark",
+            )
+            peak_alloc_gb, peak_reserved_gb, end = _end_measure()
+            task_metrics = metrics.get("text_generation_metrics", metrics)
+            eval_result = {
+                "bleu1": float(task_metrics.get("bleu1", 0.0)),
+                "rougeL_f1": float(task_metrics.get("rougeL_f1", 0.0)),
+                "eval_samples": int(task_metrics.get("eval_samples", 0)),
+                "eval_elapsed_sec": float(end - start),
+                "eval_peak_alloc_gb": None if peak_alloc_gb is None else float(peak_alloc_gb),
+                "eval_peak_reserved_gb": None if peak_reserved_gb is None else float(peak_reserved_gb),
+            }
+            logger.info(f"[Benchmark][{method}][eval] {eval_result}")
+            del state.model
+            clear_cuda_cache()
+            results.append({"method": method, **train_result, **eval_result})
         elif method == "moe_lora_stage1":
             model, train_result = _train_moe_lora_stage1_with_breakdown()
             eval_result = _measure_eval(method, model, test_dataset, tokenizer)
@@ -297,7 +347,22 @@ def main():
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump({"config": args.config, "methods": methods, "results": results}, f, ensure_ascii=False, indent=2)
 
-    print(json.dumps({"output_json": output_json, "results": results}, ensure_ascii=False, indent=2))
+    auto_plots = []
+    default_plot_specs = [
+        ("rougeL_f1", "train_peak_alloc_gb"),
+        ("rougeL_f1", "train_elapsed_sec"),
+        ("rougeL_f1", "eval_peak_alloc_gb"),
+        ("rougeL_f1", "eval_elapsed_sec"),
+    ]
+    for metric, x_axis in default_plot_specs:
+        try:
+            plot_result = generate_tradeoff_plot(output_json, metric=metric, x_axis=x_axis)
+            auto_plots.append(plot_result)
+            logger.info(f"[Benchmark][Plot] {plot_result['output_path']}")
+        except Exception as exc:
+            logger.warning(f"[Benchmark][Plot] failed for {metric} vs {x_axis}: {exc}")
+
+    print(json.dumps({"output_json": output_json, "results": results, "plots": auto_plots}, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

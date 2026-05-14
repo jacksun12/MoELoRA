@@ -44,6 +44,24 @@ class ClusterOverlapManager:
         avg_overlap = float(np.mean([p[2] for p in pairs])) if pairs else 0.0
         return mapping, pairs, avg_overlap
 
+    def nearest_parent_map(self, old_centroids: np.ndarray, new_centroids: np.ndarray):
+        """
+        为每个新簇找到最近的旧簇，允许多个新簇继承同一个旧簇。
+        Find the nearest old cluster for every new cluster, allowing many-to-one inheritance.
+        """
+        if old_centroids is None or len(old_centroids) == 0:
+            return {}, []
+
+        sim = cosine_sim_matrix(new_centroids, old_centroids)
+        mapping = {}
+        pairs = []
+        for new_idx in range(sim.shape[0]):
+            old_idx = int(np.argmax(sim[new_idx]))
+            score = float(sim[new_idx, old_idx])
+            mapping[new_idx] = old_idx
+            pairs.append((new_idx, old_idx, score))
+        return mapping, pairs
+
     def choose_strategy(self, avg_overlap: float, optimize_for: str = "time"):
         if avg_overlap >= self.high_overlap_threshold:
             return "fast_rebuild"

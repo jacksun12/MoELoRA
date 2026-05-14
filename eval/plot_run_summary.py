@@ -16,10 +16,10 @@ from src.utils.plot_style import MOPRED_COLORS, MOPRED_PATTERNS, apply_global_pl
 apply_global_plot_style()
 
 
-TEXT_METRIC_KEYS = [
-    "bleu1",
-    "rougeL_f1",
-]
+TEXT_METRIC_KEYS = ["bleu1", "rougeL_f1"]
+
+STAGE1_BASELINE_TAGS = ["raw_base", "single_lora_r32", "mocle_4x8", "hydralora_4x8", "raie"]
+STAGE2_BASELINE_TAGS = ["stage2_raw_base", "stage2_single_lora_r32", "stage2_raie"]
 
 
 def parse_log(path):
@@ -62,19 +62,30 @@ def parse_log(path):
     return baseline_metrics, stage_metrics
 
 
-def build_series(baseline_metrics, stage_metrics):
+def build_series(baseline_metrics, stage_metrics, stage="stage1"):
     labels = []
     metrics_by_label = {}
 
-    for tag in ["raw_base", "single_lora_r32", "mocle_4x8", "hydralora_4x8"]:
-        if tag in baseline_metrics:
-            labels.append(tag)
-            metrics_by_label[tag] = baseline_metrics[tag]
+    stage = str(stage).lower()
+    if stage == "stage1":
+        for tag in STAGE1_BASELINE_TAGS:
+            if tag in baseline_metrics:
+                labels.append(tag)
+                metrics_by_label[tag] = baseline_metrics[tag]
+        if "Stage-1" in stage_metrics:
+            labels.append("Stage-1")
+            metrics_by_label["Stage-1"] = stage_metrics["Stage-1"]
+        return labels, metrics_by_label
 
-    for tag in ["Stage-1", "Stage-2"]:
-        if tag in stage_metrics:
-            labels.append(tag)
-            metrics_by_label[tag] = stage_metrics[tag]
+    if stage == "stage2":
+        for tag in STAGE2_BASELINE_TAGS:
+            if tag in baseline_metrics:
+                labels.append(tag)
+                metrics_by_label[tag] = baseline_metrics[tag]
+        if "Stage-2" in stage_metrics:
+            labels.append("Stage-2")
+            metrics_by_label["Stage-2"] = stage_metrics["Stage-2"]
+        return labels, metrics_by_label
 
     return labels, metrics_by_label
 
@@ -85,6 +96,10 @@ def _display_label(tag):
         "single_lora_r32": "LoRA r32",
         "mocle_4x8": "MoCLE 4x8",
         "hydralora_4x8": "HydraLoRA 4x8",
+        "raie": "RAIE",
+        "stage2_raw_base": "Base Model",
+        "stage2_single_lora_r32": "LoRA r32",
+        "stage2_raie": "RAIE",
         "Stage-1": "MoE-LoRA Stage-1",
         "Stage-2": "MoE-LoRA Stage-2",
     }.get(tag, tag)
@@ -135,26 +150,35 @@ def resolve_latest_log(log_dir):
     return candidates[-1]
 
 
+def generate_summary_plot(log_path, output_path="", stage="stage1"):
+    if not output_path:
+        stem = os.path.splitext(os.path.basename(log_path))[0]
+        output_path = os.path.join("eval/figures", f"{stem}_{stage}_summary.png")
+
+    baseline_metrics, stage_metrics = parse_log(log_path)
+    labels, metrics_by_label = build_series(baseline_metrics, stage_metrics, stage=stage)
+    plot_text_metrics(labels, metrics_by_label, output_path, title=os.path.basename(log_path))
+    return {
+        "log_path": log_path,
+        "output_path": output_path,
+        "labels": labels,
+        "stage": stage,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log_path", type=str, default="")
     parser.add_argument("--log_dir", type=str, default="eval/logs")
     parser.add_argument("--output_path", type=str, default="")
+    parser.add_argument("--stage", type=str, default="stage1", choices=["stage1", "stage2"])
     args = parser.parse_args()
 
     log_path = args.log_path or resolve_latest_log(args.log_dir)
-    output_path = args.output_path
-    if not output_path:
-        stem = os.path.splitext(os.path.basename(log_path))[0]
-        output_path = os.path.join("eval/figures", f"{stem}_summary.png")
-
-    baseline_metrics, stage_metrics = parse_log(log_path)
-    labels, metrics_by_label = build_series(baseline_metrics, stage_metrics)
-    plot_text_metrics(labels, metrics_by_label, output_path, title=os.path.basename(log_path))
-
-    print(f"log_path={log_path}")
-    print(f"output_path={output_path}")
-    print(f"labels={labels}")
+    result = generate_summary_plot(log_path, args.output_path, stage=args.stage)
+    print(f"log_path={result['log_path']}")
+    print(f"output_path={result['output_path']}")
+    print(f"labels={result['labels']}")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import argparse
 import os
 from dataclasses import dataclass
 from typing import Dict, List
@@ -11,12 +12,19 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedule_with_warmup
 
 from data.data_loader import build_dataset, extract_clustering_features
+from eval.plot_run_summary import generate_summary_plot
+from eval.plot_stage2_baseline_compare import generate_stage2_baseline_plot
 from src.baselines import (
+    continue_raie,
+    continue_single_lora,
     evaluate_hydralora,
     evaluate_mocle,
+    evaluate_raie,
+    evaluate_raie_state,
     evaluate_raw_base,
     evaluate_single_lora,
     evaluate_stage1_moe,
+    train_raie,
     train_hydralora,
     train_mocle,
     train_single_lora,
@@ -422,6 +430,20 @@ def evaluate_single_lora_baseline(train_dataset, test_dataset, cfg, device, logg
     )
 
 
+def continue_single_lora_baseline_model(model, train_dataset, cfg, device, logger, tokenizer):
+    return continue_single_lora(
+        model,
+        train_dataset,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        build_baseline_sft_trainer=_build_baseline_sft_trainer,
+        clear_cuda_cache=clear_cuda_cache,
+        out_dir_suffix="stage2",
+    )
+
+
 def train_mocle_baseline_model(train_dataset, features, cfg, device, logger, model_id):
     return train_mocle(
         train_dataset,
@@ -454,6 +476,84 @@ def evaluate_mocle_baseline(train_dataset, test_dataset, features, cfg, device, 
         train_experts_by_clusters=train_experts_by_clusters,
         clear_cuda_cache=clear_cuda_cache,
         evaluate_model_for_task=evaluate_model_for_task,
+    )
+
+
+def train_raie_baseline_model(train_dataset, features, cfg, device, logger, tokenizer, model_id):
+    return train_raie(
+        train_dataset,
+        features,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        model_id,
+        load_causal_lm=_load_causal_lm,
+        build_baseline_sft_trainer=_build_baseline_sft_trainer,
+        clear_cuda_cache=clear_cuda_cache,
+    )
+
+
+def evaluate_raie_baseline(train_dataset, test_dataset, features, cfg, device, logger, tokenizer, model_id):
+    return evaluate_raie(
+        train_dataset,
+        test_dataset,
+        features,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        model_id,
+        load_causal_lm=_load_causal_lm,
+        build_baseline_sft_trainer=_build_baseline_sft_trainer,
+        clear_cuda_cache=clear_cuda_cache,
+        collect_features_with_cache=collect_features_with_cache,
+        build_feature_cache_path=build_feature_cache_path,
+        evaluate_model_for_task_fn=evaluate_model_for_task,
+    )
+
+
+def continue_raie_baseline_model(
+    state,
+    adaptation_dataset,
+    adaptation_labels,
+    new_centroids,
+    cfg,
+    device,
+    logger,
+    tokenizer,
+    inherit_map=None,
+):
+    return continue_raie(
+        state,
+        adaptation_dataset,
+        adaptation_labels,
+        new_centroids,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        inherit_map=inherit_map,
+        build_baseline_sft_trainer=_build_baseline_sft_trainer,
+        clear_cuda_cache=clear_cuda_cache,
+    )
+
+
+def evaluate_raie_baseline_state(state, test_dataset, cfg, device, logger, tokenizer, eval_tag="raie", cache_suffix="stage1"):
+    return evaluate_raie_state(
+        state,
+        test_dataset,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        load_causal_lm=_load_causal_lm,
+        collect_features_with_cache=collect_features_with_cache,
+        build_feature_cache_path=build_feature_cache_path,
+        clear_cuda_cache=clear_cuda_cache,
+        evaluate_model_for_task_fn=evaluate_model_for_task,
+        eval_tag=eval_tag,
+        cache_suffix=cache_suffix,
     )
 
 
@@ -551,6 +651,94 @@ def evaluate_stage1_baselines(cfg, device, logger, train_dataset, test_dataset, 
     evaluate_single_lora_baseline(train_dataset, test_dataset, cfg, device, logger, tokenizer, train_base_model_id)
     evaluate_mocle_baseline(train_dataset, test_dataset, features, cfg, device, logger, tokenizer, train_base_model_id)
     evaluate_hydralora_baseline(train_dataset, test_dataset, cfg, device, logger, tokenizer, train_base_model_id)
+    evaluate_raie_baseline(train_dataset, test_dataset, features, cfg, device, logger, tokenizer, train_base_model_id)
+
+
+def evaluate_stage2_baselines(
+    cfg,
+    device,
+    logger,
+    *,
+    stage1_dataset,
+    stage1_features,
+    stage2_dataset,
+    stage2_test_dataset,
+    tokenizer,
+    stage2_adaptation_dataset,
+    stage2_adaptation_indices,
+):
+    """
+    评估第二阶段参考基线。
+    Evaluate Stage-2 reference baselines.
+    """
+    if not cfg.get("evaluation", {}).get("compare_reference_models", True):
+        return
+
+    raw_model_id = cfg["model"]["base_model_path"]
+    train_base_model_id = cfg.get("_personalization_model_id", raw_model_id)
+
+    raw_model = _load_causal_lm(raw_model_id, device)
+    raw_metrics = evaluate_model_for_task(raw_model, stage2_test_dataset, cfg, device, tokenizer)
+    logger.info(f"[Baseline][stage2_raw_base] {raw_metrics}")
+    del raw_model
+    clear_cuda_cache()
+
+    single_model = train_single_lora_baseline_model(stage1_dataset, cfg, device, logger, tokenizer, train_base_model_id)
+    single_model = continue_single_lora_baseline_model(single_model, stage2_adaptation_dataset, cfg, device, logger, tokenizer)
+    single_metrics = evaluate_model_for_task(single_model, stage2_test_dataset, cfg, device, tokenizer)
+    logger.info(f"[Baseline][stage2_single_lora_r32] {single_metrics}")
+    del single_model
+    clear_cuda_cache()
+
+    raie_state = train_raie_baseline_model(stage1_dataset, stage1_features, cfg, device, logger, tokenizer, train_base_model_id)
+    raie_feature_model = _load_causal_lm(train_base_model_id, device)
+    raie_stage2_cache = build_feature_cache_path(cfg, split_name="baseline_raie_stage2_full", dataset_len=len(stage2_dataset))
+    raie_stage2_features = collect_features_with_cache(
+        raie_feature_model,
+        stage2_dataset,
+        batch_size=cfg["data"]["feature_batch_size"],
+        device=device,
+        feature_strategy=cfg["clustering"].get("feature_strategy", "sentence_mean"),
+        cache_path=raie_stage2_cache,
+        logger=logger,
+    )
+    del raie_feature_model
+    clear_cuda_cache()
+    selector = DBCHKSelector(
+        k_min=cfg["clustering"]["k_min"],
+        k_max=cfg["clustering"]["k_max"],
+        random_state=cfg["clustering"].get("random_state", 42),
+    )
+    _, raie_stage2_labels_all, raie_stage2_centroids = selector.select(raie_stage2_features)
+    raie_stage2_labels = np.asarray(raie_stage2_labels_all)[stage2_adaptation_indices]
+    raie_overlap = ClusterOverlapManager(
+        high_overlap_threshold=cfg["stage2"]["high_overlap_threshold"],
+        mid_overlap_threshold=cfg["stage2"]["mid_overlap_threshold"],
+    )
+    raie_inherit_map, _ = raie_overlap.nearest_parent_map(raie_state.centroids, raie_stage2_centroids)
+    raie_state = continue_raie_baseline_model(
+        raie_state,
+        stage2_adaptation_dataset,
+        raie_stage2_labels,
+        raie_stage2_centroids,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        inherit_map=raie_inherit_map,
+    )
+    evaluate_raie_baseline_state(
+        raie_state,
+        stage2_test_dataset,
+        cfg,
+        device,
+        logger,
+        tokenizer,
+        eval_tag="stage2_raie",
+        cache_suffix="stage2",
+    )
+    del raie_state.model
+    clear_cuda_cache()
 
 
 def svd_complexity(cluster_features: np.ndarray):
@@ -807,13 +995,51 @@ def stage3_demo_scheduler(layout: ClusterLayout, logger):
     logger.info(f"[Stage-3] GPU groups={len(plan['gpu'])}, CPU groups={len(plan['cpu'])}")
 
 
+def generate_auto_plots(logger):
+    """
+    基于当前运行日志自动生成关键对比图。
+    Automatically generate the key comparison figures from the current run log.
+    """
+    try:
+        stage1_summary = generate_summary_plot(logger.log_file, stage="stage1")
+        logger.info(f"[Plot] stage1_summary={stage1_summary['output_path']}")
+    except Exception as exc:
+        logger.warning(f"[Plot] failed to generate stage1 summary plot: {exc}")
+
+    try:
+        stage2_compare = generate_stage2_baseline_plot(logger.log_file)
+        logger.info(f"[Plot] stage2_compare={stage2_compare['output_path']}")
+    except Exception as exc:
+        logger.warning(f"[Plot] failed to generate stage2 baseline plot: {exc}")
+
+
+def parse_args():
+    """Parse command-line arguments. / 解析命令行参数。"""
+    parser = argparse.ArgumentParser(description="Run the 3-stage MoE-LoRA research pipeline.")
+    parser.add_argument(
+        "--config",
+        default="config_unified.yaml",
+        help="Path to the YAML config file. / YAML 配置文件路径。",
+    )
+    parser.add_argument(
+        "--profile",
+        default="",
+        help="Optional profile inside a unified config file. / 综合配置文件中的可选 profile。",
+    )
+    return parser.parse_args()
+
+
 def main():
-    cfg = load_config("config.yaml")
+    args = parse_args()
+    cfg = load_config(args.config, profile=args.profile or None)
     logger = ExperimentLogger(exp_name="MoE_LoRA_ResearchPipeline")
     device = resolve_device(cfg)
     set_global_seed(int(cfg["data"].get("seed", 42)))
 
     logger.info("=== Starting 3-Stage Privacy MoE-LoRA Pipeline ===")
+    logger.info(f"[Runtime] config={args.config}")
+    if cfg.get("_profile"):
+        logger.info(f"[Runtime] profile={cfg['_profile']}")
     logger.info(f"[Runtime] Using device={device}")
     curve_tracker = TrainingCurveTracker(
         out_dir=cfg["training"].get("curve_dir", "eval/figures"),
@@ -833,17 +1059,25 @@ def main():
     # Step 0: load the base model without LoRA injection for feature extraction and cluster-complexity estimation.
     base_model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16).to(device)
     full_dataset = build_dataset(cfg, tokenizer=tokenizer, split="train")
-    test_dataset = build_dataset(cfg, tokenizer=tokenizer, split="test")
+    full_test_dataset = build_dataset(cfg, tokenizer=tokenizer, split="test")
     task_type = get_dataset_task_type(full_dataset)
 
     historical_dataset, combined_stage2_dataset, new_data_indices = split_historical_and_new(
         full_dataset,
         cfg["stage2"].get("drift_sample_size", 1000),
     )
+    historical_test_dataset, stage2_test_dataset, stage2_test_new_indices = split_historical_and_new(
+        full_test_dataset,
+        cfg["stage2"].get("drift_sample_size", 1000),
+    )
     stage1_dataset = maybe_subset(historical_dataset, cfg["data"].get("stage1_samples", 50000))
     logger.info(
         f"[Data] task_type={task_type}, full={len(full_dataset)}, historical={len(historical_dataset)}, "
         f"new_arrivals={len(new_data_indices)}, stage1_subset={len(stage1_dataset)}"
+    )
+    logger.info(
+        f"[EvalData] stage1_test={len(historical_test_dataset)}, "
+        f"stage2_test_full={len(stage2_test_dataset)}, stage2_test_new={len(stage2_test_new_indices)}"
     )
 
     logger.info("[Stage-1] Extracting private-data features...")
@@ -898,7 +1132,7 @@ def main():
         device=device,
         logger=logger,
         train_dataset=stage1_dataset,
-        test_dataset=test_dataset,
+        test_dataset=historical_test_dataset,
         features=features,
         tokenizer=tokenizer,
     )
@@ -936,7 +1170,7 @@ def main():
         global_step_state=global_step_state,
     )
     if cfg.get("evaluation", {}).get("enable", True):
-        stage1_metrics = evaluate_model_for_task(model, test_dataset, cfg, device, tokenizer)
+        stage1_metrics = evaluate_model_for_task(model, historical_test_dataset, cfg, device, tokenizer)
         logger.info(f"[Stage-1] {stage1_metrics}")
         clear_cuda_cache()
     save_model_checkpoint(
@@ -996,14 +1230,18 @@ def main():
         mid_overlap_threshold=cfg["stage2"]["mid_overlap_threshold"],
     )
 
-    inherit_map, pairs, avg_overlap = overlap_manager.greedy_match(current_layout.centroids, new_centroids)
+    inherit_map_unique, pairs, avg_overlap = overlap_manager.greedy_match(current_layout.centroids, new_centroids)
+    inherit_map_nearest, nearest_pairs = overlap_manager.nearest_parent_map(current_layout.centroids, new_centroids)
     strategy = overlap_manager.choose_strategy(avg_overlap, optimize_for=cfg["stage2"]["optimize_for"])
 
     logger.info(f"[Stage-2] overlap pairs={pairs}")
+    logger.info(f"[Stage-2] nearest inherit pairs={nearest_pairs}")
     logger.info(f"[Stage-2] avg_overlap={avg_overlap:.4f}, strategy={strategy}")
 
     if strategy == "full_retrain":
         inherit_map = {}
+    else:
+        inherit_map = inherit_map_nearest
 
     stage2_adaptation_dataset, stage2_adaptation_indices, replay_meta = build_stage2_adaptation_subset(
         current_private_dataset=stage2_dataset,
@@ -1014,6 +1252,19 @@ def main():
     )
     stage2_adaptation_labels = np.asarray(new_labels)[stage2_adaptation_indices]
     logger.info(f"[Stage-2] adaptation_data={replay_meta}")
+
+    evaluate_stage2_baselines(
+        cfg,
+        device,
+        logger,
+        stage1_dataset=stage1_dataset,
+        stage1_features=features,
+        stage2_dataset=stage2_dataset,
+        stage2_test_dataset=stage2_test_dataset,
+        tokenizer=tokenizer,
+        stage2_adaptation_dataset=stage2_adaptation_dataset,
+        stage2_adaptation_indices=stage2_adaptation_indices,
+    )
 
     rebuild_for_new_layout(model, new_ranks, inherit_map=inherit_map, device=device)
     set_model_router_centroids(model, new_centroids)
@@ -1039,7 +1290,7 @@ def main():
         global_step_state=global_step_state,
     )
     if cfg.get("evaluation", {}).get("enable", True):
-        stage2_metrics = evaluate_model_for_task(model, test_dataset, cfg, device, tokenizer)
+        stage2_metrics = evaluate_model_for_task(model, stage2_test_dataset, cfg, device, tokenizer)
         logger.info(f"[Stage-2] {stage2_metrics}")
         clear_cuda_cache()
     save_model_checkpoint(
@@ -1053,6 +1304,7 @@ def main():
     # Stage-3：系统级调度演示。
     # Stage-3: system-level scheduling demo.
     stage3_demo_scheduler(ClusterLayout(new_k, new_labels, new_centroids, new_ranks), logger)
+    generate_auto_plots(logger)
     logger.info("=== Pipeline completed ===")
 
 

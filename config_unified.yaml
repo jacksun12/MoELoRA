@@ -1,0 +1,186 @@
+# Unified configuration for MoE-LoRA-System.
+# 用法 / Usage:
+#   python main_server_sim.py --config config_unified.yaml --profile 7style_drift
+#   python eval/benchmark_system_tradeoff.py --config config_unified.yaml --profile multiapp_style_drift
+#
+# Available profiles / 可选 profiles:
+#   default_3style
+#   llama32_1b
+#   7style
+#   7style_drift
+#   7style_drift_llama32_1b
+#   multiapp_style
+#   multiapp_style_drift
+#   composite_multiapp
+
+active_profile: default_3style  # 默认 profile；命令行 --profile 会覆盖 / default profile; overridden by --profile
+
+runtime:
+  device: "cuda:0"  # 可选 / options: cpu | cuda | cuda:0 | cuda:1 ...
+
+model:
+  base_model_path: "Qwen/Qwen2.5-0.5B"  # 可选示例 / examples: Qwen/Qwen2.5-0.5B | meta-llama/Llama-3.2-1B-Instruct
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]  # LoRA 注入模块；Qwen/Llama 常用这些 attention projection
+  top_k: 1  # 路由激活 expert 数；当前主线使用 1 / number of active experts
+  alpha: 16  # LoRA alpha；常用 16/32 / LoRA scaling alpha
+  dropout: 0.05  # LoRA dropout；常用 0.0/0.05/0.1
+
+stage0:
+  enable: true  # 是否做云侧 warmup；可选 true/false
+  dataset_type: "style_transfer_jsonl"  # 可选 / options: style_transfer_jsonl | composite_device | movielens_1m
+  data_dir: "data/cds_cloud_pretrain"  # Stage-0 数据目录
+  use_peft: true  # true: 训练 PEFT adapter 后 merge；false: 直接 SFT 全模型，不建议端侧实验使用
+  epochs: 1  # Stage-0 训练轮数；常用 1
+  learning_rate: 0.0002  # Stage-0 学习率；常用 1e-4/2e-4
+  per_device_batch_size: 4  # Stage-0 单卡 batch size
+  gradient_accumulation_steps: 4  # Stage-0 梯度累积
+  max_samples: 0  # 0 表示使用全部样本；正数表示采样上限
+  reuse_existing: true  # 若 merged_output_dir 已存在则复用
+  adapter_output_dir: "outputs/stage0_cloud_adapter"  # Stage-0 adapter 输出目录
+  merged_output_dir: "outputs/stage0_cloud_merged"  # Stage-0 merged warm base 输出目录
+  eval_max_samples: 1000  # Stage-0 eval 样本上限；0 表示不评估
+
+data:
+  dataset_type: "style_transfer_jsonl"  # 可选 / options: style_transfer_jsonl | composite_device | movielens_1m
+  data_dir: "data/cds_private_device"  # 私有数据目录；需包含 train.jsonl/val.jsonl/test.jsonl
+  max_seq_len: 512  # 最大序列长度；常用 256/512/1024
+  history_size: 10  # 推荐/多应用序列任务使用；style-transfer 中保留兼容
+  min_history: 3  # 推荐/多应用序列任务最短历史
+  min_user_samples: 3  # MovieLens 构建样本时使用
+  neg_sample_size: 3  # 多选推荐负例数；3 表示 A/B/C/D 四选一
+  seed: 42  # 全局随机种子
+  batch_size: 48  # 通用 batch fallback
+  feature_batch_size: 32  # 特征提取 batch size
+  rank_eval_batch_size: 4  # 保留兼容字段；当前结构化 rank allocation 不再跑 PPL
+  eval_batch_size: 4  # 评估 batch size
+  stage1_samples: 50000  # Stage-1 训练样本 cap；大于数据量时等于全量
+  feature_cache_dir: "data/feature_cache"  # hidden-state feature cache 目录
+
+clustering:
+  feature_strategy: "sentence_mean"  # 可选 / options: sentence_mean | last_token
+  k_min: 2  # 自动选簇最小 k；若想允许退化成 single LoRA 可设为 1
+  k_max: 8  # 自动选簇最大 k
+  random_state: 42  # 聚类随机种子
+  visualization_method: "strict"  # 可选 / options: none | pca | tsne | umap | both | strict | all
+  visualization_max_points: 3000  # 聚类可视化最多点数
+  visualization_use_all_stage1: true  # true: 可视化使用全部 Stage-1 点；false: 采样
+  visualization_dir: "eval/figures"  # 图输出目录
+
+rank_allocation:
+  total_budget: 32  # 总 LoRA rank budget；对应 single_lora_r32 的预算
+  min_rank: 1  # 每个 expert 最小 rank
+  max_rank: 32  # 每个 expert 最大 rank
+  svd_weight: 1.0  # 当前只使用结构复杂度；保留权重字段便于扩展
+
+training:
+  trainer_backend: "trl"  # 可选 / options: trl | custom
+  cluster_epochs: 2  # 每个 cluster/expert 训练轮数
+  lora_lr: 0.0002  # LoRA SFT 学习率
+  gradient_accumulation_steps: 4  # custom backend 兼容字段
+  trl_per_device_batch_size: 4  # TRL 单卡 batch size
+  trl_gradient_accumulation_steps: 4  # TRL 梯度累积
+  trl_bf16: true  # bf16 训练；A6000/Hopper/Ampere 推荐 true
+  trl_fp16: false  # fp16 训练；与 bf16 二选一
+  trl_gradient_checkpointing: false  # 显存紧张时可设 true
+  trl_dataloader_num_workers: 0  # dataloader worker 数；容器环境默认 0 更稳
+  use_scheduler: true  # 是否启用 cosine scheduler
+  warmup_ratio: 0.10  # scheduler warmup 比例
+  grad_clip: 1.0  # 梯度裁剪阈值
+  curve_log_every: 20  # 训练曲线日志间隔
+  curve_dir: "eval/figures"  # 训练曲线输出目录
+  curve_run_name: "moe_lora_run"  # 训练曲线 run name
+
+stage2:
+  drift_sample_size: 1000  # train/test 末尾多少样本视作新分布；若大于数据量则自动取 1/4
+  high_overlap_threshold: 0.75  # 高 overlap 阈值
+  mid_overlap_threshold: 0.50  # 中 overlap 阈值
+  replay_enable: true  # Stage-2 是否回放历史样本
+  replay_ratio: 0.5  # replay 样本数相对 new arrivals 的比例
+  replay_strategy: "stratified"  # 可选 / options: stratified | random
+  replay_min_per_cluster: 0  # 每个旧簇最少 replay 样本
+  optimize_for: "time"  # 可选 / options: time | performance
+
+evaluation:
+  enable: true  # 是否执行评估
+  compare_reference_models: true  # 是否评估 baseline
+  k: 1  # 推荐任务 top-k；文本生成任务保留兼容
+  max_samples: 500  # 评估样本上限；0 表示全量
+  max_new_tokens: 96  # 文本生成最大新 token；推荐任务可设小一些如 8
+
+outputs:
+  checkpoint_root: "/remote-home/share/sunyansong/aggLLMv3"  # checkpoint 根目录
+  trl_run_root: "eval/trl_runs"  # TRL run 输出目录
+
+profiles:
+  default_3style: {}
+
+  llama32_1b:
+    model:
+      base_model_path: "meta-llama/Llama-3.2-1B-Instruct"
+    stage0:
+      adapter_output_dir: "outputs/stage0_cloud_adapter_llama32_1b"
+      merged_output_dir: "outputs/stage0_cloud_merged_llama32_1b"
+    training:
+      curve_run_name: "moe_lora_run_llama32_1b"
+
+  7style:
+    data:
+      data_dir: "data/cds_private_device_7style"
+    training:
+      curve_run_name: "moe_lora_run_7style"
+
+  7style_drift:
+    data:
+      data_dir: "data/cds_private_device_7style_drift"
+    stage2:
+      drift_sample_size: 480
+    training:
+      curve_run_name: "moe_lora_run_7style_drift"
+
+  7style_drift_llama32_1b:
+    model:
+      base_model_path: "meta-llama/Llama-3.2-1B-Instruct"
+    data:
+      data_dir: "data/cds_private_device_7style_drift"
+    stage0:
+      adapter_output_dir: "outputs/stage0_cloud_adapter_7style_drift_llama32_1b"
+      merged_output_dir: "outputs/stage0_cloud_merged_7style_drift_llama32_1b"
+    stage2:
+      drift_sample_size: 480
+    training:
+      curve_run_name: "moe_lora_run_7style_drift_llama32_1b"
+
+  multiapp_style:
+    data:
+      data_dir: "data/cds_private_device_multiapp"
+    stage0:
+      adapter_output_dir: "outputs/stage0_multiapp_style_adapter"
+      merged_output_dir: "outputs/stage0_multiapp_style_merged"
+    training:
+      curve_run_name: "moe_lora_run_multiapp_style"
+
+  multiapp_style_drift:
+    data:
+      data_dir: "data/cds_private_device_multiapp_drift"
+    stage0:
+      adapter_output_dir: "outputs/stage0_multiapp_style_drift_adapter"
+      merged_output_dir: "outputs/stage0_multiapp_style_drift_merged"
+    stage2:
+      drift_sample_size: 480
+    training:
+      curve_run_name: "moe_lora_run_multiapp_style_drift"
+
+  composite_multiapp:
+    stage0:
+      enable: false
+      dataset_type: "composite_device"
+      data_dir: "data/auto_composite_multiapp/composite_device_multiapp"
+      adapter_output_dir: "outputs/stage0_composite_multiapp_adapter"
+      merged_output_dir: "outputs/stage0_composite_multiapp_merged"
+    data:
+      dataset_type: "composite_device"
+      data_dir: "data/auto_composite_multiapp/composite_device_multiapp"
+    evaluation:
+      max_new_tokens: 8
+    training:
+      curve_run_name: "moe_lora_run_composite_multiapp"

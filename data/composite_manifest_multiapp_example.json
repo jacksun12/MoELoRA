@@ -1,0 +1,56 @@
+{
+  "composite_user_id": "device_user_multi_001",
+  "sources": [
+    {
+      "type": "movielens_1m",
+      "data_dir": "data/ml_1m",
+      "user_id": 123,
+      "source_dataset": "movielens_1m",
+      "app": "video",
+      "domain": "movie",
+      "item_prefix": "ml"
+    },
+    {
+      "type": "jsonl",
+      "path": "data/prepared_multiapp/amazon_events.jsonl",
+      "user_field": "user_id",
+      "user_id": "user_amazon_001",
+      "timestamp_field": "timestamp",
+      "item_field": "item_id",
+      "title_field": "title",
+      "meta_field": "meta",
+      "source_dataset": "amazon",
+      "app": "shopping",
+      "domain": "product",
+      "item_prefix": "amazon"
+    },
+    {
+      "type": "jsonl",
+      "path": "data/prepared_multiapp/goodreads_events.jsonl",
+      "user_field": "user_id",
+      "user_id": "user_book_001",
+      "timestamp_field": "timestamp",
+      "item_field": "item_id",
+      "title_field": "title",
+      "meta_field": "meta",
+      "source_dataset": "goodreads",
+      "app": "reading",
+      "domain": "book",
+      "item_prefix": "goodreads"
+    },
+    {
+      "type": "jsonl",
+      "path": "data/prepared_multiapp/yelp_events.jsonl",
+      "user_field": "user_id",
+      "user_id": "user_local_001",
+      "timestamp_field": "timestamp",
+      "item_field": "item_id",
+      "title_field": "title",
+      "meta_field": "meta",
+      "source_dataset": "yelp",
+      "app": "local",
+      "domain": "poi",
+      "item_prefix": "yelp"
+    }
+  ]
+}
